@@ -13,6 +13,7 @@ import os
 import torch.nn as nn
 
 from techniques.utils import read_tensor, get_model_info
+import copy
 
 resnet = models.resnet18(pretrained=True)
 i=0
@@ -273,14 +274,19 @@ def gen_gcam(img, model_name, target_index=None, neg=False, weight=False, show=T
     # Can work with any model, but it assumes that the model has a
     # feature method, and a classifier method,
     # as in the VGG models in torchvision.
-    if has_model != None:
+    if has_model == None:
+        print('---------GET MODEL FROM NAME----------')
         model, classes, target_layer = get_model_info(model_name)
+        resnet = copy.deepcopy(model)
         del model.fc
-        #target_layer = 'layer4'
     else:
-        model = has_model
+        print('---------MODEL IS SUPPLIED----------')
+        #print(has_model.fc)
+        model = copy.deepcopy(has_model)
+        resnet = copy.deepcopy(has_model)
         classes = OBJ_NAMES
-        target_layer = 'layer4'
+        target_layer = 'layer4.1'
+        del model.fc
     grad_cam = GradCam(model=model, target_layer_names=[target_layer], use_cuda=True)
         
     #img = np.float32(cv2.resize(img, (224, 224))) / 255
@@ -309,3 +315,31 @@ def gen_gcam(img, model_name, target_index=None, neg=False, weight=False, show=T
     cam_gb = np.multiply(cam_mask, gb)
     utils.save_image(torch.from_numpy(cam_gb), 'cam_gb.jpg')"""
     return mask
+
+def gen_gb(img, model_name, target_index=None, neg=False, weight=False, show=True, has_model=None):
+
+    if has_model == None:
+        print('---------GET MODEL FROM NAME----------')
+        model, classes, target_layer = get_model_info(model_name)
+        resnet = copy.deepcopy(model)
+        del model.fc
+    else:
+        print('---------MODEL IS SUPPLIED----------')
+        #print(has_model.fc)
+        model = copy.deepcopy(has_model)
+        resnet = copy.deepcopy(has_model)
+        classes = OBJ_NAMES
+        target_layer = 'layer4.1'
+        del model.fc
+    gb_model = GuidedBackpropReLUModel(model = models.resnet50(pretrained=True), use_cuda=args.use_cuda)
+    gb = gb_model(input, index=target_index)
+    if not os.path.exists('gb'):
+        os.mkdir('gb')
+    if not os.path.exists('camgb'):
+        os.mkdir('camgb')
+    print('saving image...')
+    utils.save_image(torch.from_numpy(gb), '/work/lisabdunlap/explain-eval/techniques/Grad_CAM/gb_{}.jpg')
+    cam_mask = np.zeros(gb.shape)
+    for j in range(0, gb.shape[0]):
+        cam_mask[j, :, :] = mask
+    cam_gb = np.multiply(cam_mask, gb)

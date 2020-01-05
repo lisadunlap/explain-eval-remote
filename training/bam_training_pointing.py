@@ -16,6 +16,7 @@ import argparse
 import sys
 from PIL import ImageFile
 import cv2
+import time
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import shutil
@@ -28,7 +29,7 @@ from tester import compute_output
 from accuracy import accuracy
 from metrics import compute_metrics
 from techniques.generate_grounding import gen_grounding
-from techniques.utils import pointing_game, jensenshannon, get_img_mask
+from techniques.utils import pointing_game, jensenshannon, get_img_mask, get_displ_img
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -38,6 +39,7 @@ parser.add_argument('--cuda', default=0, type=int, help='cuda device')
 parser.add_argument('--epochs', default=150, type=int, help='num epochs')
 parser.add_argument('--start', default=0, type=int, help='num epochs')
 parser.add_argument('--name', default='testing_new', type=str, help='model name')
+parser.add_argument('--loss', default='mse', type=str, help='loss function')
 
 args = parser.parse_args()
 
@@ -146,6 +148,7 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
 
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
+        start_time = time.time()
 
         # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
@@ -181,20 +184,25 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                 for img, label, loc in zip(inputs, labels, locations):
                     label = label.cpu().numpy()
                     label_name = OBJ_NAMES[label]
-                    img = img.cpu().numpy().transpose((1, 2, 0))
-                    mean = np.array([0.485, 0.456, 0.406])
-                    std = np.array([0.229, 0.224, 0.225])
-                    displ_img = std * img + mean
-                    displ_img = np.clip(displ_img, 0, 1)
-                    displ_img /= np.max(displ_img)
-                    displ_img = np.uint8(displ_img * 255)
-                    gcam_expl = gen_grounding(displ_img, 'gcam', label_name, model_name='obj', show=False, save=False, index=1)
+                    #img = img.cpu().numpy().transpose((1, 2, 0))
+                    #mean = np.array([0.485, 0.456, 0.406])
+                    #std = np.array([0.229, 0.224, 0.225])
+                    #displ_img = std * img + mean
+                    #displ_img = np.clip(displ_img, 0, 1)
+                    #displ_img /= np.max(displ_img)
+                    #displ_img = np.uint8(displ_img * 255)
+                    displ_img = get_displ_img(img)
+                    gcam_expl = gen_grounding(displ_img, 'gcam', label_name, show=False, save=False, index=1, has_model=model)
                     expl_masks += [gcam_expl]
                     #cv2.imwrite('/work/lisabdunlap/explain-eval/training/examples/training-mask-data-{0}.jpg'.format(j), gcam_expl)
                     #cv2.imwrite('/work/lisabdunlap/explain-eval/training/examples/training-orig-data-{0}.jpg'.format(j), displ_img)
                     mask_results += [pointing_game(gcam_expl, loc.numpy()[0])]
                     j += 1
-                mask_loss = nn.MSELoss().cuda()
+                
+                if args.loss == 'mse':
+                    mask_loss = nn.MSELoss().cuda()
+                else:
+                    mask_loss = nn.BCELoss().cuda()
                 print('mask loss: ', mask_loss(torch.Tensor(mask_results), mask_target))
 
                 loss = criterion(outputs, labels) + mask_loss(torch.Tensor(mask_results), mask_target)
@@ -249,6 +257,7 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                     best_top1 = epoch_acc_1.avg
                     best_model = copy.deepcopy(model)
                     print('new best accuracy = ', best_top1)
+            print("--- %s minutes ---" % ((time.time() - start_time)/60))
 
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
@@ -303,7 +312,7 @@ def save(filename='pretrained resnet18' + args.name):
 
 ### SECTION 4 : Define model architecture
 
-model_ft = models.resnet50(pretrained=True)
+model_ft = models.resnet18(pretrained=True)
 num_ftrs = model_ft.fc.in_features
 model_ft.fc = nn.Linear(num_ftrs, 10)
 

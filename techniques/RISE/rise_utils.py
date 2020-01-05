@@ -106,21 +106,20 @@ def gen_rise_grounding(img, model, cuda=False, show=True, index=1):
     device = ("cuda" if torch.cuda.is_available() else "cpu")
     model = nn.Sequential(model, nn.Softmax(dim=1))
     model = model.eval()
-    torch.cuda.set_device(2)
     print ('Current cuda device ', torch.cuda.current_device())
     if cuda:
         model=model.cuda()
        # model = torch.nn.DataParallel(model, device_ids=[5, 2])
 
     for p in model.parameters():
-        p.requires_grad = True
+        p.requires_grad = False
 
     #create explainer
     explainer = RISE(model, (224, 224), 50)
     
     # Generate masks for RISE or use the saved ones.
     maskspath = 'masks.npy'
-    generate_new = False
+    generate_new = True
 
     if generate_new or not os.path.isfile(maskspath):
         explainer.generate_masks(N=6000, s=8, p1=0.1, savepath=maskspath)

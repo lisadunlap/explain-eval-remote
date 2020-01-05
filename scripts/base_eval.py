@@ -7,8 +7,9 @@ import sys
 import csv
 import random
 from datetime import datetime
+import torch
 from metrics.utils import *
-from techniques.saliency import gen_grounding
+from techniques.generate_grounding import gen_grounding
 
 def write_to_csv(row):
     with open(filename, 'a+') as csvFile:
@@ -42,11 +43,17 @@ if __name__== "__main__":
                         type=list,
                         nargs='+',
                         help="Models to test")
+    parser.add_argument("--cuda",
+                        default=4,
+                        type=int,
+                        help="device")
     args = parser.parse_args(sys.argv[1:])
+    
+    torch.cuda.set_device(args.cuda)
     
     filename = 'results/base-eval-%s.csv'%datetime.now().strftime('%Y-%m-%d-%H-%M')
     paths = []
-    for r, d, f in os.walk('data/ILSVRC2012_img_val/'):
+    for r, d, f in os.walk('/work/lisabdunlap/explain-eval/data/ILSVRC2012_img_val/'):
         for file in f:
             if '.JPEG' in file:
                 paths.append(os.path.join(r, file))
@@ -68,13 +75,13 @@ if __name__== "__main__":
         img = cv2.imread(path1)
         val_img = cv2.resize(img, (224, 224))
 
-        techniques = ['gcam', 'lime', 'rise']
+        techniques = ['gcam', 'lime', 'rise', 'ig']
         thresholds = [15, 25, 50]
         mask_dict_resnet18 = {}
         mask_dict_vgg19 = {}
         for t in techniques:
-                mask_dict_resnet18[t] = gen_grounding(val_img, 'resnet18', t, path=path1, show=False)[1]
-                mask_dict_vgg19[t] = gen_grounding(val_img, 'vgg19', t, path=path1, show=False)[1]
+                mask_dict_resnet18[t] = gen_grounding(val_img, t, 'random', show=False)
+                mask_dict_vgg19[t] = gen_grounding(val_img, t, 'random', show=False)
                 print('done with {0}:'.format(t))
 
         for thresh in thresholds:

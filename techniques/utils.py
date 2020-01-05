@@ -43,6 +43,12 @@ def get_model_info(model_name, other_layer = None):
         model.fc = nn.Linear(num_ftrs, 10)
         model.load_state_dict(torch.load('/work/lisabdunlap/bam/pytorch_models/obj2model_best.pth.tar')['state_dict'])
         return model.cuda(), OBJ_NAMES, 'layer4'
+    if model_name == 'test18':
+        model = models.resnet18()
+        num_ftrs = model.fc.in_features
+        model.fc = nn.Linear(num_ftrs, 10)
+        model.eval()
+        return model, OBJ_NAMES, 'layer4'
     CONFIG = {
         'resnet152': {
             'target_layer': 'layer4',
@@ -293,3 +299,13 @@ def get_img_mask(img, location, show=True):
     if show:
         plt.imshow(overlay)
     return overlay
+
+def get_displ_img(img):
+    img = img.cpu().numpy().transpose((1, 2, 0))
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    displ_img = std * img + mean
+    displ_img = np.clip(displ_img, 0, 1)
+    displ_img /= np.max(displ_img)
+    displ_img = np.uint8(displ_img * 255)
+    return displ_img
