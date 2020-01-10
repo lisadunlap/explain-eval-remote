@@ -121,6 +121,7 @@ def generate_lime_explanation(img, model_t, pred_rank=1, positive_only=True, sho
     print('lime classsification: {0}'.format(explanation.top_labels[pred_rank-1]))
     # img_boundry1 = mark_boundaries(temp/255.0, mask)
     img_boundry1 = mark_boundaries(temp/255.0, mask)
+    cv2.imwrite('/work/lisabdunlap/explain-eval/results/different_architectures/cat_dog/lime_resnet18.png', img_boundry1)
     """if show:
         heatmap = cv2.cvtColor(cv2.applyColorMap(np.uint8((mask/np.max(mask)) * 255.0), cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
         cam = heatmap + np.float32(displ_img)

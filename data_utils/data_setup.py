@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import random
 from torch.utils.data.sampler import Sampler
-from data_utils.miniplaces_dataset import MiniPlacesDataset
+#from data_utils.miniplaces_dataset import MiniPlacesDataset
 
 OBJ_NAMES = [
     'backpack', 'bird', 'dog', 'elephant', 'kite', 'pizza', 'stop_sign',
@@ -123,13 +123,13 @@ def get_model(model_name):
 def get_imagenet_classes():
     classes = list()
     try:
-        with open('./data/synset_words.txt') as lines:
+        with open('/work/lisabdunlap/explain-eval/data/synset_words.txt') as lines:
             for line in lines:
                 line = line.strip().split(' ', 1)[1]
                 line = line.split(', ', 1)[0].replace(' ', '_')
                 classes.append(line)
     except:
-         with open('../data/synset_words.txt') as lines:
+         with open('/work/lisabdunlap/explain-eval/data/synset_words.txt') as lines:
             for line in lines:
                 line = line.strip().split(' ', 1)[1]
                 line = line.split(', ', 1)[0].replace(' ', '_')
@@ -229,7 +229,7 @@ def get_imagenet_test(datadir='../data/test/',
 def get_dataloader(dataset,
                    batch_size=1,
                    shuffle=False,
-                   sample_size=3,
+                   sample_size=100,
                    all=False):
     if not all:
         sample = []

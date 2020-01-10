@@ -17,6 +17,7 @@ import sys
 from PIL import ImageFile
 import cv2
 import time
+import wandb
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 import shutil
@@ -28,20 +29,47 @@ from runningAvg import RunningAvg
 from tester import compute_output
 from accuracy import accuracy
 from metrics import compute_metrics
-from techniques.generate_grounding import gen_grounding
+from techniques.generate_grounding import gen_grounding_gcam_batch
 from techniques.utils import pointing_game, jensenshannon, get_img_mask, get_displ_img
 
+torch.cuda.set_device('cuda:2')
+
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
-parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
+parser.add_argument('--lr', default=0.0001, type=float, help='learning rate')
 parser.add_argument('--train', action='store_true', help='train')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
-parser.add_argument('--cuda', default=0, type=int, help='cuda device')
+parser.add_argument('--cuda', default=4, type=int, help='cuda device')
 parser.add_argument('--epochs', default=150, type=int, help='num epochs')
 parser.add_argument('--start', default=0, type=int, help='num epochs')
-parser.add_argument('--name', default='testing_new', type=str, help='model name')
-parser.add_argument('--loss', default='mse', type=str, help='loss function')
+parser.add_argument('--name', default='bam_wandb', type=str, help='model name')
+parser.add_argument('--epoch_decay', default=10, type=int, help='epoch decay')
+parser.add_argument('--weight_decay', default=0.01, type=float, help='weight decay')
+parser.add_argument('--batch_size', default=125, type=int, help='batch size')
 
 args = parser.parse_args()
+
+wandb.init(project="bam-baseline")
+
+
+wandb.init(entity="wandb", project="bam-baseline")
+wandb.watch_called = False # Re-run the model without restarting the runtime, unnecessary after our next release
+
+# WandB – Config is a variable that holds and saves hyperparameters and inputs
+config = wandb.config          # Initialize config
+config.batch_size = 125  # input batch size for training (default: 64)
+config.test_batch_size = 125    # input batch size for testing (default: 1000)
+config.epochs = args.epochs             # number of epochs to train (default: 10)
+config.lr = args.lr              # learning rate (default: 0.01)
+#config.momentum = args.momentum          # SGD momentum (default: 0.5) 
+config.no_cuda = True         # disables https://app.wandb.ai/lisabdunlap/bam-baseline training
+config.log_interval = 1     # how many batches to wait before logging training status
+config.step_size = 2
+config.weight_decay = args.weight_decay
+config.epoch_decay = args.epoch_decay
+
+result_path = '/work/lisabdunlap/explain-eval/training/saved/'
+
+time_elapsed = 0
 
 if torch.cuda.is_available():
     torch.cuda.set_device(args.cuda)
@@ -51,12 +79,6 @@ OBJ_NAMES = [
     'toilet', 'truck', 'zebra'
 ]
 
-all_locations = []
-with open('/work/lisabdunlap/bam/data/obj/loc_train.txt', 'r') as ff:
-    for line in ff:
-        all_locations.append(line)
-
-CUDA_VISIBLE_DEVICES = args.cuda
 print('Are you using your GPU? {}'.format("Yes!" if args.cuda != 'cpu' else "Nope :("))
 
 ### SECTION 2 - data loading and transformation
@@ -86,24 +108,32 @@ data_transforms = {
 
 data_dir = '/work/lisabdunlap/bam/data/obj/'
 
+train_txt = 'train.txt'
+train_loc_txt = 'loc_train.txt'
+val_txt = 'val.txt'
+val_loc_txt = 'loc_val.txt'
+    
+print('train file: {0}    train loc file: {1}'.format(train_txt, train_loc_txt))
+print('val file: {0}    val loc file: {1}'.format(val_txt, val_loc_txt))
+
 dsets = dict()
 dsets['train'] = MiniPlacesDataset(
         photos_path=os.path.join(data_dir),
-        labels_path=os.path.join(data_dir, 'train.txt'),
+        labels_path=os.path.join(data_dir, train_txt),
         transform=data_transforms['train'],
         train=True,
-        location_paths=os.path.join(data_dir, 'loc_train.txt')
+        location_paths=os.path.join(data_dir, train_loc_txt)
     )
 dsets['val'] = MiniPlacesDataset(
         photos_path=os.path.join(data_dir),
-        labels_path=os.path.join(data_dir, 'val2.txt'),
+        labels_path=os.path.join(data_dir, val_txt),
         transform=data_transforms['val'],
         train=False,
-        location_paths=os.path.join(data_dir, 'loc_val.txt')
+        location_paths=os.path.join(data_dir, val_loc_txt)
     )
 
 dset_loaders = {x: torch.utils.data.DataLoader(dsets[x], batch_size=BATCH_SIZE,
-                                               shuffle=False, num_workers=25)
+                                               shuffle=True, num_workers=25)
                 for x in ['train', 'val']}
 
 dset_sizes = {x: len(dsets[x]) for x in ['train', 'val']}
@@ -122,21 +152,25 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
     best_top1 = 0
     best_top5 = 0
 
-    if checkpoint_file:
-        if os.path.isfile(checkpoint_file):
+    #past_file = '/work/lisabdunlap/explain-eval/training/saved/bam_resnet5_diff_lr_checkpoint.pth.tar'
+    past_file=False
+    if past_file:
+        if os.path.isfile(past_file):
             try:
-                checkpoint = torch.load(checkpoint_file)
+                checkpoint = torch.load(past_file)
                 start_epoch = checkpoint['epoch']
                 best_top1 = checkpoint['best_top1']
                 best_top5 = checkpoint['best_top5']
                 loss_history = checkpoint['loss_history']
                 model.load_state_dict(checkpoint['state_dict'])
                 print("=> loaded checkpoint '{}' (epoch {})"
-                      .format(checkpoint_file, checkpoint['epoch']))
+                      .format(past_file, checkpoint['epoch']))
             except:
                 print("Found the file, but couldn't load it.")
+                sys.exit()
         else:
-            print("=> no checkpoint found at '{}'".format(checkpoint_file))
+            print("=> no checkpoint found at '{}'".format(past_file))
+            sys.exit()
 
     # params for gradient noise have been commented out, as they were not
     # used the final model.
@@ -166,47 +200,28 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
 
             counter = 0
             # Iterate over data.
+            example_images = []
+            gcams = []
             for data in dset_loaders[phase]:
+                it_start = time.time()
                 inputs, labels, paths, locations = data
                 mask_target = torch.Tensor([[0.0,1.0] for i in range(len(inputs))])
+                mask_loss = nn.MSELoss().to('cuda:2')
 
                 # wrap them in Variable
-                inputs = Variable(inputs.float().cuda())
-                labels = Variable(labels.long().cuda())
+                inputs = Variable(inputs.float().to('cuda:2'))
+                labels = Variable(labels.long().to('cuda:2'))
 
                 optimizer.zero_grad()
                 outputs = model(inputs)
                 _, preds5 = torch.topk(outputs.data, 5)
                 _, preds1 = torch.max(outputs.data, 1)
-                expl_masks = []
-                mask_results = []
-                j=0
-                for img, label, loc in zip(inputs, labels, locations):
-                    label = label.cpu().numpy()
-                    label_name = OBJ_NAMES[label]
-                    #img = img.cpu().numpy().transpose((1, 2, 0))
-                    #mean = np.array([0.485, 0.456, 0.406])
-                    #std = np.array([0.229, 0.224, 0.225])
-                    #displ_img = std * img + mean
-                    #displ_img = np.clip(displ_img, 0, 1)
-                    #displ_img /= np.max(displ_img)
-                    #displ_img = np.uint8(displ_img * 255)
-                    displ_img = get_displ_img(img)
-                    gcam_expl = gen_grounding(displ_img, 'gcam', label_name, show=False, save=False, index=1, has_model=model)
-                    expl_masks += [gcam_expl]
-                    #cv2.imwrite('/work/lisabdunlap/explain-eval/training/examples/training-mask-data-{0}.jpg'.format(j), gcam_expl)
-                    #cv2.imwrite('/work/lisabdunlap/explain-eval/training/examples/training-orig-data-{0}.jpg'.format(j), displ_img)
-                    mask_results += [pointing_game(gcam_expl, loc.numpy()[0])]
-                    j += 1
-                
-                if args.loss == 'mse':
-                    mask_loss = nn.MSELoss().cuda()
-                else:
-                    mask_loss = nn.BCELoss().cuda()
-                print('mask loss: ', mask_loss(torch.Tensor(mask_results), mask_target))
-
-                loss = criterion(outputs, labels) + mask_loss(torch.Tensor(mask_results), mask_target)
-                print("loss: ", loss)
+            
+                loss1 = criterion(outputs, labels) 
+                loss2 = ask_loss(torch.Tensor(gcams), mask_target)
+                loss = loss1 + loss2
+                print('normal loss: ', loss1)
+                print('mask loss: ', loss2)
                 # Just so that you can keep track that something's happening and don't feel like the program isn't running.
 
                 # backward + optimize only if in training phase
@@ -217,7 +232,12 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                     #    # add noise
                     #    p.grad = p.grad + np.random.normal(0, sigma**2)
                     optimizer.step()
-                # try:
+                else:
+                    expls = gen_grounding_gcam_batch([x for x in inputs], 'thing', model.module, show=False, save=False, from_saved=False,layer='layer4', device =2)
+                    example_images.append(wandb.Image(
+                inputs[0], caption="Pred: {} Truth: {}".format(preds[0].item(), labels[0])))
+                    gcams.append(wandb.Image(
+                expls[0], caption="Pred: {} Truth: {}".format(preds[0].item(), labels[0])))
                 losses.update(loss.data, inputs.size(0))
                 acc_top_1, acc_top_5 = accuracy(outputs.data, labels.data)
                 epoch_acc_1.update(acc_top_1[0], inputs.size(0))
@@ -245,11 +265,18 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                 'best_top5': best_top5,
                 'loss_history': loss_history,
                 'optimizer': optimizer.state_dict(),
-            }, is_best)
+            }, is_best, checkpoint_file)
             print('checkpoint saved!')
 
             # deep copy the model
             if phase == 'val':
+                wandb.log({
+                    "Examples": example_images,
+                    "Explanations": gcams,
+                    "epoch_acc": epoch_acc_1.avg,
+                    "top_acc": best_top1, 
+                    "loss": losses.avg,
+                    "Epoch": epoch})
                 if USE_TENSORBOARD:
                     foo.add_scalar_value('epoch_loss', losses.avg, step=epoch)
                     foo.add_scalar_value('epoch_acc_1', epoch_acc_1, step=epoch)
@@ -257,8 +284,7 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                     best_top1 = epoch_acc_1.avg
                     best_model = copy.deepcopy(model)
                     print('new best accuracy = ', best_top1)
-            print("--- %s minutes ---" % ((time.time() - start_time)/60))
-
+    
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
     print('Best val Acc: {:4f}'.format(best_top1))
@@ -267,9 +293,9 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
 
 
 # This function changes the learning rate over the training model.
-def exp_lr_scheduler(optimizer, epoch, init_lr=BASE_LR, lr_decay_epoch=EPOCH_DECAY):
+def exp_lr_scheduler(optimizer, epoch, init_lr=args.lr, lr_decay_epoch=args.epoch_decay):
     """Decay learning rate by a factor of DECAY_WEIGHT every lr_decay_epoch epochs."""
-    lr = init_lr * (DECAY_WEIGHT ** (epoch // lr_decay_epoch))
+    lr = init_lr * (args.weight_decay ** (epoch // lr_decay_epoch))
 
     if epoch % lr_decay_epoch == 0:
         print('LR is set to {}'.format(lr))
@@ -282,10 +308,10 @@ def exp_lr_scheduler(optimizer, epoch, init_lr=BASE_LR, lr_decay_epoch=EPOCH_DEC
 
 ## Helper Functions
 
-def save_checkpoint(state, is_best, filename='../' + args.name + '_checkpoint.pth.tar'):
+def save_checkpoint(state, is_best, filename=args.name + '_checkpoint.pth.tar'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, '../' + args.name + '_model_best.pth.tar')
+        shutil.copyfile(filename, '/work/lisabdunlap/explain-eval/training/saved/' + args.name + '_model_best.pth.tar')
 
 
 def print_stats(epoch_num=None, it_num=None, train=True, batch_time=None, loss=None, top1=None, top5=None):
@@ -312,33 +338,33 @@ def save(filename='pretrained resnet18' + args.name):
 
 ### SECTION 4 : Define model architecture
 
-model_ft = models.resnet18(pretrained=True)
+model_ft = models.resnet50(pretrained=True)
 num_ftrs = model_ft.fc.in_features
 model_ft.fc = nn.Linear(num_ftrs, 10)
 
 criterion = nn.CrossEntropyLoss()
 
-criterion.cuda()
-model_ft.cuda()
+criterion.to('cuda:2')
+model_ft.to('cuda:2')
 
-# model_ft = nn.DataParallel(model_ft, device_ids= [4, 5, 6, 7])
+model_ft = nn.DataParallel(model_ft, device_ids= [2, 3, 5, 6])
 
-optimizer_ft = optim.RMSprop(model_ft.parameters(), lr=BASE_LR)
+optimizer_ft = optim.RMSprop(model_ft.parameters(), lr=args.lr)
 
 #if len(sys.argv) < 1:
 #    print(
 #        "Type 'tr' to train, 'test' to test, and 'metrics' to extract the error metrics'.  For 'test' and 'metrics' make sure to add another argument specifying the path of the model.")
 
 if args.train:
-    checkpoint_file = '../' + args.name + '_checkpoint.pth.tar'
+    result_path = '/work/lisabdunlap/explain-eval/training/saved/'
+    checkpoint_file = result_path + args.name + '_checkpoint.pth.tar'
     print("created chechpoint file")
     # Run the functions and save the best model in the function model_ft.
     model_ft = train_model(model_ft, criterion, optimizer_ft, exp_lr_scheduler, checkpoint_file,
                                num_epochs=int(args.epochs))
 
     # Save mode
-    torch.save(model_ft.state_dict(), args.name + '-fine_tuned_best_model.pt')
-    # model_ft.save_state_dict(sys.argv[1]+'-fine_tuned_best_model.pt')
+    torch.save(model_ft.state_dict(), result_path + args.name + '-fine_tuned_best_model.pt')
 
 if not args.train:
     print("from file")
@@ -352,8 +378,6 @@ if not args.train:
     }
     if sys.argv[1] == 'test':
         compute_output(model_path, output_file_name, model_ft, True, test_options)
-    #elif sys.argv[1] == 'metrics':
-    #    test_options['photos_path'] = os.path.expanduser('~/data/images/')
-    #    compute_output(model_path, 'train_' + output_file_name, model_ft, use_gpu, test_options, compute_metrics)
-    #    compute_output(model_path, 'val_' + output_file_name, model_ft, use_gpu, test_options, compute_metrics)
+
+
 

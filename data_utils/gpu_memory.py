@@ -88,7 +88,7 @@ def apply_dual_transform(image_left, image_right, trans, train=True):
         image_left = TF.center_crop(image_left, 224)
         image_right = TF.center_crop(image_right, 224)
         
-        image_right = TF.to_tensor(image_right)
+        image_left = TF.to_tensor(image_left)
         
     image_right = TF.to_tensor(image_right)
     

@@ -30,7 +30,7 @@ def get_model_info(model_name, other_layer = None):
         model.fc = nn.Linear(num_ftrs, 10)
         model.load_state_dict(torch.load('/work/lisabdunlap/explain-eval/training/checkpoint/'+model_name+'.pth')['net'])
         model.eval()
-        return model, cifar_classes, 'layer4'
+        return model.cuda(), cifar_classes, 'layer4'
     if model_name == 'scene' or model_name == 'bam_scene':
         model = models.resnet50(pretrained=True)
         num_ftrs = model.fc.in_features
@@ -41,7 +41,8 @@ def get_model_info(model_name, other_layer = None):
         model = models.resnet50(pretrained=True)
         num_ftrs = model.fc.in_features
         model.fc = nn.Linear(num_ftrs, 10)
-        model.load_state_dict(torch.load('/work/lisabdunlap/bam/pytorch_models/obj2model_best.pth.tar')['state_dict'])
+        model_state = torch.load('/work/lisabdunlap/bam/pytorch_models/obj/objmodel_best.pth.tar', map_location='cuda:0')
+        model.load_state_dict(model_state['state_dict'])
         return model.cuda(), OBJ_NAMES, 'layer4'
     if model_name == 'test18':
         model = models.resnet18()
@@ -76,6 +77,11 @@ def get_model_info(model_name, other_layer = None):
             'layer_name': 'denseblock4'
         },
         'resnet18': {
+            'target_layer': 'layer4',
+            'input_size': 224,
+            'layer_name': 4.1
+        },
+        'resnet50': {
             'target_layer': 'layer4',
             'input_size': 224,
             'layer_name': 4.1
@@ -118,13 +124,13 @@ def get_model(model_name):
 def get_imagenet_classes():
     classes = list()
     try:
-        with open('../data/synset_words.txt') as lines:
+        with open('/work/lisabdunlap/explain-eval/data/synset_words.txt') as lines:
             for line in lines:
                 line = line.strip().split(' ', 1)[1]
                 line = line.split(', ', 1)[0].replace(' ', '_')
                 classes.append(line)
     except:
-        with open('./data/synset_words.txt') as lines:
+        with open('/work/lisabdunlap/explain-eval/data/synset_words.txt') as lines:
             for line in lines:
                 line = line.strip().split(' ', 1)[1]
                 line = line.split(', ', 1)[0].replace(' ', '_')
@@ -142,7 +148,7 @@ def weight_mask(heatmap, mask):
     mask[mask==1.0] = float(heatmap_sum/lime_sum)
     return heatmap, mask
 
-def preprocess_groundings(map, sum_value=1, threshold=0, binary=False):
+def preprocess_groundings(map, sum_value=1, threshold=100, binary=False):
     m=np.array(map, dtype=float)
     if len(np.unique(m)) == 2:
         m = erode(map, threshold)
@@ -221,8 +227,9 @@ def jsd(map1, map2, base=np.e, threshold=0):
     #return sp.stats.entropy(m1,m, base=base)/2. +  sp.stats.entropy(m2, m, base=base)/2.
     return distance.jensenshannon(m1, m2)
 
-def jensenshannon(p, q, base=None, threshold=0):
-    p = preprocess_groundings(p, threshold=threshold)
+def jensenshannon(p, q, base=None, threshold=100, mask=False):
+    if mask:
+        p = preprocess_groundings(p, threshold=threshold)
     q = preprocess_groundings(q, threshold=threshold)
     p = p.flatten()
     q = q.flatten()
@@ -301,11 +308,24 @@ def get_img_mask(img, location, show=True):
     return overlay
 
 def get_displ_img(img):
-    img = img.cpu().numpy().transpose((1, 2, 0))
+    try:
+        img = img.cpu().numpy().transpose((1, 2, 0))
+    except:
+        img = img.numpy().transpose((1, 2, 0))
     mean = np.array([0.485, 0.456, 0.406])
     std = np.array([0.229, 0.224, 0.225])
     displ_img = std * img + mean
     displ_img = np.clip(displ_img, 0, 1)
     displ_img /= np.max(displ_img)
-    displ_img = np.uint8(displ_img * 255)
+    displ_img = displ_img
+    return displ_img
+
+def get_displ_img_cifar(img):
+    try:
+        img = img.cpu().numpy().transpose((1, 2, 0))
+    except:
+        img = img.numpy().transpose((1, 2, 0))
+    displ_img = np.clip(img, 0, 1)
+    displ_img /= np.max(displ_img)
+    displ_img = displ_img
     return displ_img

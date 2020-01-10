@@ -36,7 +36,7 @@ def random_baseline_integrated_gradients(inputs, model, target_label_idx, predic
     avg_intgrads = np.average(np.array(all_intgrads), axis=0)
     return avg_intgrads
 
-def generate_ig(img, model, cuda=False, show=True, reg=False):
+def generate_ig(img, model, cuda=False, show=True, reg=False, outlines=False):
     """ generate Integrated Gradients on given numpy image """
     # start to create models...
     model.eval()
@@ -56,16 +56,16 @@ def generate_ig(img, model, cuda=False, show=True, reg=False):
     #classes = get_imagenet_classes()
     #print('integrated gradients clasification: {0}'.format(classes[label_index]))
     gradients = np.transpose(gradients[0], (1, 2, 0))
-    img_gradient_overlay = visualize(gradients, img, clip_above_percentile=95, clip_below_percentile=58, overlay=True, mask_mode=True, outlines=True)
+    img_gradient_overlay = visualize(gradients, img, clip_above_percentile=95, clip_below_percentile=58, overlay=True, mask_mode=True, outlines=outlines)
     plt.imshow(img_gradient_overlay)
-    img_gradient = visualize(gradients, img, clip_above_percentile=95, clip_below_percentile=58, overlay=False, outlines = True)
+    img_gradient = visualize(gradients, img, clip_above_percentile=95, clip_below_percentile=58, overlay=False, outlines = outlines)
 
     # calculae the integrated gradients 
     attributions = random_baseline_integrated_gradients(img, model, label_index, calculate_outputs_and_gradients, \
                                                         steps=50, num_random_trials=10, cuda=cuda)
     img_integrated_gradient_overlay= visualize(attributions, img, clip_above_percentile=95, clip_below_percentile=58, \
-                                                morphological_cleanup=True, overlay=True, mask_mode=True, outlines=True, threshold=.01)
-    img_integrated_gradient= visualize(attributions, img, clip_above_percentile=95, clip_below_percentile=58, morphological_cleanup=True, overlay=False, outlines=True, threshold=.01)
+                                                morphological_cleanup=True, overlay=True, mask_mode=True, outlines=outlines, threshold=.01)
+    img_integrated_gradient= visualize(attributions, img, clip_above_percentile=95, clip_below_percentile=58, morphological_cleanup=True, overlay=False, outlines=outlines, threshold=.01)
     output_img = generate_entrie_images(img, img_gradient, img_gradient_overlay, img_integrated_gradient, \
                                        img_integrated_gradient_overlay)
     
@@ -73,8 +73,8 @@ def generate_ig(img, model, cuda=False, show=True, reg=False):
     ig_mask = img_fill(np.uint8(img_integrated_gradient[:,:,1]), 0)
     ig_mask[ig_mask != 0] = 1
     cam = img[:, :, 1]+np.uint8(ig_mask)
-    if show:
-        plt.imshow(img_integrated_gradient_overlay)
+    #if show:
+    #    plt.imshow(img_integrated_gradient_overlay)
     if reg:
         return img_gradient_overlay, img_gradient
     print('finished Integrated Gradients explanation')
