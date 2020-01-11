@@ -5,7 +5,7 @@ import numpy as np
 from torch.autograd import Variable
 from utils import read_tensor
 
-def calculate_outputs_and_gradients(inputs, model, target_label_idx, cuda=torch.cuda.is_available()):
+def calculate_outputs_and_gradients(inputs, model, target_label_idx, cuda='cuda'):
     # do the pre-processing
     predict_idx = None
     gradients = []
@@ -18,7 +18,7 @@ def calculate_outputs_and_gradients(inputs, model, target_label_idx, cuda=torch.
         index = np.ones((output.size()[0], 1)) * target_label_idx
         index = torch.tensor(index, dtype=torch.int64)
         if cuda:
-            index = index.cuda()
+            index = index.to(cuda)
         output = output.gather(1, index)
         # clear grad
         model.zero_grad()
@@ -37,14 +37,14 @@ def pre_processing(obs, cuda):
     obs = np.expand_dims(obs, 0)
     obs = np.array(obs)
     # torch_device = torch.device('cpu')
-    normalized_tensor = torch.tensor(obs, dtype=torch.float32, device = torch.device('cuda'),  requires_grad=True)
+    normalized_tensor = torch.tensor(obs, dtype=torch.float32, requires_grad=True)
     """if cuda:
         torch_device = torch.device('cuda:0')
     else:
         torch_device = torch.device('cpu')
     normalized_tensor = Variable(read_tensor(obs), device=torch_device, requires_grad=True)"""
 
-    return normalized_tensor
+    return normalized_tensor.to(cuda)
 
 # generate the entire images
 def generate_entrie_images(img_origin, img_grad, img_grad_overlay, img_integrad, img_integrad_overlay):

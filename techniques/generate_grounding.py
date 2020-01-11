@@ -14,11 +14,12 @@ import torch.nn as nn
 #techniques
 #from Grad_CAM.grad_cam import gen_gcam
 #from Grad_CAM.old_grad_cam import old_gen_gcam, get_guidedBackProp_img
-from Grad_CAM.main_gcam import gen_gcam
+from Grad_CAM.main_gcam import gen_gcam, gen_gcam_target
 from Integrated_Gradients.integrated_gradients import generate_ig
 from LIME.LIME import generate_lime_explanation
 from RISE.rise_utils import gen_rise_grounding
-from utils import get_model, get_model_info, get_displ_img
+from utils import get_model,get_displ_img
+from data_utils.data_setup import get_model_info, get_imagenet_classes
 from data_utils.gpu_memory import dump_tensors
 
 #if torch.cuda.is_available():
@@ -38,7 +39,8 @@ def gen_grounding(img,
                   patch=False, 
                   save=True,
                   correct=True,
-                  device=5):
+                  device=5, 
+                  index=False):
     #CUDA_VISIBLE_DEVICES=str(device)
     # Create result directory if it doesn't exist; all explanations should 
     # be stored in a folder that is the predicted class
@@ -67,19 +69,26 @@ def gen_grounding(img,
         img = np.uint8(img*255)
     if isinstance(model, str):
         model_name = model
-        model, classes, target_layer = get_model_info(model)
+        model, classes, target_layer = get_model_info(model, device=device)
     else:
         model_name = 'custom'
+    model.eval()
+    
+    device = 'cuda:'+str(device)
     
     # Generate the explanations
     if technique == 'lime' or technique == 'LIME':
         mask = generate_lime_explanation(img, model, pred_rank=target_index, positive_only=True, show=show)
     elif technique == 'gradcam' or technique == 'GradCam' or technique == 'gcam':
-        mask = gen_gcam([img], model, target_index = target_index, target_layer=target_layer, show_labels=True)
+        if not index:
+            mask = gen_gcam([img], model, target_index = target_index, show_labels=True)
+        else:
+            mask = gen_gcam_target([img], model, target_index = [target_index], show_labels=True)
     elif technique == 'ig' or technique == 'integrated-gradients':
-        mask = generate_ig(img, model, reg=reg, cuda=torch.cuda.is_available())
+        mask = generate_ig(img, model, reg=reg, cuda=device)
     elif technique == 'rise' or technique == 'RISE':
-        mask = gen_rise_grounding(img, model, index=target_index, cuda=torch.cuda.is_available())
+        print('gen ', device)
+        mask = gen_rise_grounding(img, model, index=target_index, cuda=torch.cuda.is_available(), device=device)
     elif technique == 'gbp' or technique == 'guided-backprop':
         mask = get_guidedBackProp_img(img, model, reg=reg)
     elif technique == 'excitation backprop' or technique == 'eb':
@@ -122,6 +131,7 @@ def gen_grounding(img,
 
     return mask
 
+# this is for generating a single image with a tensor with reguards to either a specific index or the topk
 def gen_grounding_gcam(img,
                   label_name = 'explanation',
                   model='resnet18',
@@ -133,8 +143,9 @@ def gen_grounding_gcam(img,
                   layer='layer4', 
                   save=True,
                   device=0,
-                  list=False,
-                  tensor=False):
+                  tensor=False, 
+                  index=False, 
+                  classes=get_imagenet_classes()):
     #CUDA_VISIBLE_DEVICES=str(device)
     # Create result directory if it doesn't exist; all explanations should 
     # be stored in a folder that is the predicted class
@@ -166,9 +177,12 @@ def gen_grounding_gcam(img,
     # Generate the explanations
     #mask = old_gen_gcam(img, model, target_index = target_index, target_layer=layer, from_saved=False)
     if not tensor:
-         mask = gen_gcam([img], model, target_index = target_index, target_layer=layer, device=device)
+         mask = gen_gcam([img], model, target_index = target_index, target_layer=layer, classes=classes, device=device)
     else:
-        mask = gen_gcam([img], model, target_index = target_index, target_layer=layer, device=device, prep=False)
+        if not index:
+            mask = gen_gcam([img], model, target_index = target_index, target_layer=layer, device=device, classes=classes, prep=False)
+        else:
+            mask = gen_gcam_target([img], model, target_index = target_index, target_layer=layer,classes=classes, device=device, prep=False)
     mask /= np.max(mask)
     if tensor:
         img = get_displ_img(img)
@@ -208,17 +222,19 @@ def gen_grounding_gcam_batch(img,
                   unique_id=None,
                   layer='layer4', 
                   save=True,
-                  device=0):
+                  device=0,
+                  topk=True,
+                  classes=get_imagenet_classes()):
     #CUDA_VISIBLE_DEVICES=str(device)
     # Create result directory if it doesn't exist; all explanations should 
     # be stored in a folder that is the predicted class
     dateTimeObj = datetime.now()
     timestampStr = dateTimeObj.strftime("%d-%b-%Y_%H")
     
-    print('------------------------------')
-    torch.cuda.empty_cache()
-    dump_tensors()
-    print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
+    #print('------------------------------')
+    #torch.cuda.empty_cache()
+    #dump_tensors()
+    #print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 
     save_path += label_name + '/'
     if not os.path.exists(save_path):
@@ -243,12 +259,15 @@ def gen_grounding_gcam_batch(img,
         model, classes, layer = get_model_info(model)
     
     # Generate the explanations
-    masks = gen_gcam(img, model, target_index = target_index, target_layer=layer, device=device, single=False, prep=False)
+    if topk:
+        masks = gen_gcam(img, model, target_index = target_index, target_layer=layer, device=device, single=False, prep=False, classes=classes)
+    else:
+        masks = gen_gcam_target(img, model, target_index = target_index, target_layer=layer, device=device, single=False, prep=False, classes=classes)
     
-    print('------------------------------')
+    #print('------------------------------')
     torch.cuda.empty_cache()
-    dump_tensors()
-    print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
+    #dump_tensors()
+    #print('^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^')
 
     return masks
 

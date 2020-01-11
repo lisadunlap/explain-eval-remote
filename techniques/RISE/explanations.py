@@ -4,12 +4,14 @@ import torch.nn as nn
 from skimage.transform import resize
 from tqdm import tqdm
 
+
 class RISE(nn.Module):
-    def __init__(self, model, input_size, gpu_batch=100):
+    def __init__(self, model, input_size, gpu_batch=100, device='cuda'):
         super(RISE, self).__init__()
         self.model = model
         self.input_size = input_size
         self.gpu_batch = gpu_batch
+        self.device = 'cuda:7'
 
     def generate_masks(self, N, s, p1, savepath='masks.npy'):
         cell_size = np.ceil(np.array(self.input_size) / s)
@@ -30,13 +32,13 @@ class RISE(nn.Module):
         self.masks = self.masks.reshape(-1, 1, *self.input_size)
         np.save(savepath, self.masks)
         self.masks = torch.from_numpy(self.masks).float()
-        self.masks = self.masks.cuda()
+        self.masks = self.masks.to(self.device)
         self.N = N
         self.p1 = p1
 
     def load_masks(self, filepath):
         self.masks = np.load(filepath)
-        self.masks = torch.from_numpy(self.masks).float().cuda()
+        self.masks = torch.from_numpy(self.masks).float().to(self.device)
         self.N = self.masks.shape[0]
 
     def forward(self, x):

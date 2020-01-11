@@ -72,9 +72,9 @@ class RangeSampler(Sampler):
     def __len__(self):
         return len(self.r)
     
-def explain_instance(model, explainer, img, top_k=1, show=False):
+def explain_instance(model, explainer, img, top_k=1, show=False, device='cuda'):
     if torch.cuda.is_available():
-        img = img.cuda()
+        img = img.to(device)
     saliency = explainer(img).cpu().numpy()
     p, c = torch.topk(model(img), k=top_k)
     p, c = p[0], c[0]
@@ -101,21 +101,17 @@ def explain_instance(model, explainer, img, top_k=1, show=False):
         plt.show()"""
     return sal
     
-def gen_rise_grounding(img, model, cuda=False, show=True, index=1):
+def gen_rise_grounding(img, model, cuda=False, show=True, index=1, device='cuda'):
     # Load black box model for explanations
-    device = ("cuda" if torch.cuda.is_available() else "cpu")
     model = nn.Sequential(model, nn.Softmax(dim=1))
     model = model.eval()
-    print ('Current cuda device ', torch.cuda.current_device())
-    if cuda:
-        model=model.cuda()
-       # model = torch.nn.DataParallel(model, device_ids=[5, 2])
 
     for p in model.parameters():
         p.requires_grad = False
 
     #create explainer
-    explainer = RISE(model, (224, 224), 50)
+    print('mod dev ', device)
+    explainer = RISE(model, (224, 224), 50, device)
     
     # Generate masks for RISE or use the saved ones.
     maskspath = 'masks.npy'
@@ -129,7 +125,7 @@ def gen_rise_grounding(img, model, cuda=False, show=True, index=1):
         print('Masks are loaded.')
     
     #explain instance
-    sal = explain_instance(model, explainer, read_tensor(img), index, show=show)
+    sal = explain_instance(model, explainer, read_tensor(img), index, show=show, device=device)
     print("finished RISE")
     return sal
 

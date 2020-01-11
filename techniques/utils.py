@@ -22,7 +22,7 @@ SCENE_NAMES = [
 
 cifar_classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-def get_model_info(model_name, other_layer = None):
+def get_model_info(model_name, other_layer = None, device=0):
     if 'ckpt' in model_name:
         print('model numbr', model_name)
         model = models.resnet18()
@@ -93,15 +93,11 @@ def get_model_info(model_name, other_layer = None):
             line = line.strip().split(' ', 1)[1]
             line = line.split(', ', 1)[0].replace(' ', '_')
             classes.append(line)
-    '''except:
-        with open('./data/synset_words.txt') as lines:
-            for line in lines:
-                line = line.strip().split(' ', 1)[1]
-                line = line.split(', ', 1)[0].replace(' ', '_')
-                classes.append(line)'''
     model = models.__dict__[model_name](pretrained=True)
     if torch.cuda.is_available():
-        model = model.cuda()
+        print('utils dev ', device)
+        dev = cuda + str(device)
+        model = model.to(dev)
     if other_layer:
         layer_name = other_layer
     else:
@@ -318,7 +314,7 @@ def get_displ_img(img):
     displ_img = np.clip(displ_img, 0, 1)
     displ_img /= np.max(displ_img)
     displ_img = displ_img
-    return displ_img
+    return np.uint8(displ_img*255)
 
 def get_displ_img_cifar(img):
     try:

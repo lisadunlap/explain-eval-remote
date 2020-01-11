@@ -40,16 +40,18 @@ parser.add_argument('--cuda', default=0, type=int, help='cuda device')
 parser.add_argument('--epochs', default=150, type=int, help='num epochs')
 parser.add_argument('--start', default=0, type=int, help='num epochs')
 parser.add_argument('--name', default='bam_wandb', type=str, help='model name')
-parser.add_argument('--epoch_decay', default=10, type=int, help='epoch decay')
-parser.add_argument('--weight_decay', default=0.01, type=float, help='weight decay')
-parser.add_argument('--batch_size', default=125, type=int, help='batch size')
-
+parser.add_argument('--epoch-decay', default=10, type=int, help='epoch decay')
+parser.add_argument('--weight-decay', default=0.01, type=float, help='weight decay')
+parser.add_argument('--batch-size', default=125, type=int, help='batch size')
+parser.add_argument('--pretrained', action='store_true', help='train')
 args = parser.parse_args()
 
 wandb.init(project="bam-baseline")
 
 
 wandb.init(entity="wandb", project="bam-baseline")
+device = "cuda:"+str(args.cuda)
+print('device: ', device)
 wandb.watch_called = False # Re-run the model without restarting the runtime, unnecessary after our next release
 
 # WandB – Config is a variable that holds and saves hyperparameters and inputs
@@ -151,7 +153,8 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
     best_top5 = 0
 
     #past_file = '/work/lisabdunlap/explain-eval/training/saved/bam_resnet5_diff_lr_checkpoint.pth.tar'
-    past_file=False
+    #past_file = '/work/lisabdunlap/explain-eval/training/saved/bam_wandb_checkpoint.pth.tar'
+    past_file = False
     if past_file:
         if os.path.isfile(past_file):
             try:
@@ -206,8 +209,8 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                 mask_target = torch.Tensor([[0.0,1.0] for i in range(len(inputs))])
 
                 # wrap them in Variable
-                inputs = Variable(inputs.float().cuda())
-                labels = Variable(labels.long().cuda())
+                inputs = Variable(inputs.float().to(device))
+                labels = Variable(labels.long().to(device))
 
                 optimizer.zero_grad()
                 outputs = model(inputs)
@@ -226,11 +229,11 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                     #    p.grad = p.grad + np.random.normal(0, sigma**2)
                     optimizer.step()
                 else:
-                    expls = gen_grounding_gcam_batch([x for x in inputs][:10], 'thing', model.module, show=False, save=False, from_saved=False,layer='layer4', device =0)
+                    #expls = gen_grounding_gcam_batch([x for x in inputs][:10], 'thing', model.module, show=False, save=False, from_saved=False,layer='layer4', device =device)
                     example_images.append(wandb.Image(
                 inputs[0], caption="Pred: {} Truth: {}".format(preds1[0].item(), labels[0])))
-                    gcams.append(wandb.Image(
-                expls[0], caption="Pred: {} Truth: {}".format(preds1[0].item(), labels[0])))
+                    #gcams.append(wandb.Image(
+                #expls[0], caption="Pred: {} Truth: {}".format(preds1[0].item(), labels[0])))
                 losses.update(loss.data, inputs.size(0))
                 acc_top_1, acc_top_5 = accuracy(outputs.data, labels.data)
                 epoch_acc_1.update(acc_top_1[0], inputs.size(0))
@@ -331,16 +334,16 @@ def save(filename='pretrained resnet18' + args.name):
 
 ### SECTION 4 : Define model architecture
 
-model_ft = models.resnet50(pretrained=True)
+model_ft = models.resnet50(pretrained=args.pretrained)
 num_ftrs = model_ft.fc.in_features
 model_ft.fc = nn.Linear(num_ftrs, 10)
 
 criterion = nn.CrossEntropyLoss()
 
-criterion.cuda()
-model_ft.cuda()
+criterion.to(device)
+model_ft.to(device)
 
-model_ft = nn.DataParallel(model_ft, device_ids= [0, 1, 2, 3, 4, 5, 6, 7])
+model_ft = nn.DataParallel(model_ft, device_ids= [3, 4, 5, 6, 7])
 
 optimizer_ft = optim.RMSprop(model_ft.parameters(), lr=args.lr)
 

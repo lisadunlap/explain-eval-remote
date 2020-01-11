@@ -32,26 +32,26 @@ from metrics import compute_metrics
 from techniques.generate_grounding import gen_grounding_gcam_batch
 from techniques.utils import pointing_game, jensenshannon, get_img_mask, get_displ_img
 
-torch.cuda.set_device('cuda:2')
+#torch.cuda.set_device('cuda:2')
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.0001, type=float, help='learning rate')
 parser.add_argument('--train', action='store_true', help='train')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
-parser.add_argument('--cuda', default=4, type=int, help='cuda device')
+parser.add_argument('--cuda', default=0, type=int, help='cuda device')
 parser.add_argument('--epochs', default=150, type=int, help='num epochs')
 parser.add_argument('--start', default=0, type=int, help='num epochs')
 parser.add_argument('--name', default='bam_wandb', type=str, help='model name')
-parser.add_argument('--epoch_decay', default=10, type=int, help='epoch decay')
-parser.add_argument('--weight_decay', default=0.01, type=float, help='weight decay')
-parser.add_argument('--batch_size', default=125, type=int, help='batch size')
+parser.add_argument('--epoch-decay', default=30, type=int, help='epoch decay')
+parser.add_argument('--weight-decay', default=0.01, type=float, help='weight decay')
+parser.add_argument('--batch-size', default=125, type=int, help='batch size')
 
 args = parser.parse_args()
 
-wandb.init(project="bam-baseline")
+wandb.init(project="bam-pointing")
 
 
-wandb.init(entity="wandb", project="bam-baseline")
+wandb.init(entity="wandb", project="bam-pointing")
 wandb.watch_called = False # Re-run the model without restarting the runtime, unnecessary after our next release
 
 # WandB – Config is a variable that holds and saves hyperparameters and inputs
@@ -70,6 +70,7 @@ config.epoch_decay = args.epoch_decay
 result_path = '/work/lisabdunlap/explain-eval/training/saved/'
 
 time_elapsed = 0
+device = 'cuda:'+str(args.cuda)
 
 if torch.cuda.is_available():
     torch.cuda.set_device(args.cuda)
@@ -152,7 +153,7 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
     best_top1 = 0
     best_top5 = 0
 
-    #past_file = '/work/lisabdunlap/explain-eval/training/saved/bam_resnet5_diff_lr_checkpoint.pth.tar'
+    #past_file = '/work/lisabdunlap/explain-eval/training/saved/bam_wandb_checkpoint.pth.tar'
     past_file=False
     if past_file:
         if os.path.isfile(past_file):
@@ -206,19 +207,23 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                 it_start = time.time()
                 inputs, labels, paths, locations = data
                 mask_target = torch.Tensor([[0.0,1.0] for i in range(len(inputs))])
-                mask_loss = nn.MSELoss().to('cuda:2')
+                mask_loss = nn.MSELoss().to(device)
 
                 # wrap them in Variable
-                inputs = Variable(inputs.float().to('cuda:2'))
-                labels = Variable(labels.long().to('cuda:2'))
+                inputs = Variable(inputs.float().to(device))
+                labels = Variable(labels.long().to(device))
 
                 optimizer.zero_grad()
                 outputs = model(inputs)
                 _, preds5 = torch.topk(outputs.data, 5)
                 _, preds1 = torch.max(outputs.data, 1)
+                
+                #Grad-CAM
+                expls = gen_grounding_gcam_batch([x for x in inputs], 'thing', model.module, target_index=labels.cpu(), 
+                                                 show=False, save=False, from_saved=False, layer='layer4', device=device)
             
                 loss1 = criterion(outputs, labels) 
-                loss2 = ask_loss(torch.Tensor(gcams), mask_target)
+                loss2 = mask_loss(torch.Tensor(gcams), mask_target)
                 loss = loss1 + loss2
                 print('normal loss: ', loss1)
                 print('mask loss: ', loss2)
@@ -233,11 +238,12 @@ def train_model(model, criterion, optimizer, lr_scheduler, checkpoint_file, num_
                     #    p.grad = p.grad + np.random.normal(0, sigma**2)
                     optimizer.step()
                 else:
-                    expls = gen_grounding_gcam_batch([x for x in inputs], 'thing', model.module, show=False, save=False, from_saved=False,layer='layer4', device =2)
+                    expls_val = gen_grounding_gcam_batch([x for x in inputs][:5], 'thing', model.module, target_index=labels.cpu()[:5], 
+                            show=False, save=False, from_saved=False, layer='layer4', device=device)
                     example_images.append(wandb.Image(
-                inputs[0], caption="Pred: {} Truth: {}".format(preds[0].item(), labels[0])))
+                inputs[:5], caption="Pred: {} Truth: {}".format(preds[0].item(), labels[0])))
                     gcams.append(wandb.Image(
-                expls[0], caption="Pred: {} Truth: {}".format(preds[0].item(), labels[0])))
+                expls_val[:5], caption="Pred: {} Truth: {}".format(preds[0].item(), labels[0])))
                 losses.update(loss.data, inputs.size(0))
                 acc_top_1, acc_top_5 = accuracy(outputs.data, labels.data)
                 epoch_acc_1.update(acc_top_1[0], inputs.size(0))
@@ -338,16 +344,16 @@ def save(filename='pretrained resnet18' + args.name):
 
 ### SECTION 4 : Define model architecture
 
-model_ft = models.resnet50(pretrained=True)
+model_ft = models.resnet50(pretrained=False)
 num_ftrs = model_ft.fc.in_features
 model_ft.fc = nn.Linear(num_ftrs, 10)
 
 criterion = nn.CrossEntropyLoss()
 
-criterion.to('cuda:2')
-model_ft.to('cuda:2')
+criterion.to(device)
+model_ft.to(device)
 
-model_ft = nn.DataParallel(model_ft, device_ids= [2, 3, 5, 6])
+model_ft = nn.DataParallel(model_ft, device_ids= [0, 1, 2, 3, 4, 5, 6, 7])
 
 optimizer_ft = optim.RMSprop(model_ft.parameters(), lr=args.lr)
 

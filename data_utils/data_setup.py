@@ -31,7 +31,7 @@ class RangeSampler(Sampler):
         return len(self.r)
 
 
-def get_model_info(model_name, other_layer = None):
+def get_model_info(model_name, other_layer = None, device=0):
     print('model name ', model_name)
     if 'ckpt' in model_name:
         print('model numbr', model_name)
@@ -110,12 +110,14 @@ def get_model_info(model_name, other_layer = None):
                 classes.append(line)
     model = models.__dict__[model_name](pretrained=True)
     if torch.cuda.is_available():
-        model = model.cuda()
+        dev = 'cuda:' + str(device)
+        model = model.to(dev)
     if other_layer:
         layer_name = other_layer
     else:
         layer_name = CONFIG['layer_name']
-    return model, classes, layer_name
+        target_layer = CONFIG['target_layer']
+    return model, classes, target_layer
 
 def get_model(model_name):
     return get_model_info(model_name)[0]

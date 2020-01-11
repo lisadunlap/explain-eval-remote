@@ -15,7 +15,7 @@ from techniques.utils import get_model, get_imagenet_classes, read_tensor
 from data_utils.data_setup import *
 
 # integrated gradients
-def integrated_gradients(inputs, model, target_label_idx, predict_and_gradients, baseline, steps=50, cuda=False):
+def integrated_gradients(inputs, model, target_label_idx, predict_and_gradients, baseline, steps=50, cuda='cu'):
     if baseline is None:
         baseline = 0 * inputs 
     # scale inputs and compute gradients
@@ -41,16 +41,6 @@ def generate_ig(img, model, cuda=False, show=True, reg=False, outlines=False):
     # start to create models...
     model.eval()
     # for displaying explanation
-    if cuda:
-        model.cuda()
-        #model = torch.nn.DataParallel(model, device_ids=[1, 2, 3, 4, 5, 6, 7])
-    #if model_name == 'inception':
-        # the input image's size is different
-    #    img = cv2.resize(img, (299, 299))
-    #print('how about this prediction? {0}'.format(get_top_prediction('vgg19', read_tensor(img))[0]))
-    #img = img.astype(np.float32)
-    #img = img[:, :, (2, 1, 0)]
-    #print('is this a good prediction? {0}'.format(get_top_prediction('vgg19', read_tensor(img))[0]))
     # calculate the gradient and the label index
     gradients, label_index = calculate_outputs_and_gradients([img], model, None, cuda)
     #classes = get_imagenet_classes()
