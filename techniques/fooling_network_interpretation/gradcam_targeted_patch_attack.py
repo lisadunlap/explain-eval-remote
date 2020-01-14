@@ -51,16 +51,15 @@ class ModelOutputs:
         output = self.model.classifier(output)
         return target_activations, output
 
-def preprocess_image(input_image):
+def preprocess_image(input_image, device='cuda'):
     """
     This method normalizes the input image and converts it to a torch Variable
     :param input_image: The input image to be pre-processed
     :return: torch Variable of the normalized input image
     """
-    normalized_tensor = normalized_tensor = Variable(read_tensor(input_image), requires_grad=True)
-    if torch.cuda.is_available():
-        normalized_tensor = normalized_tensor.cuda()
-        print("USING CUDA ---------------------")
+    input_image = torch.unsqueeze(input_image, 0)
+    normalized_tensor = normalized_tensor = Variable(input_image, requires_grad=True)
+    normalized_tensor = normalized_tensor.to(device)
 
     return normalized_tensor
 
@@ -86,14 +85,13 @@ class GradCamAttack:
     This class is responsible for creating a targeted adversarial patch such that the top predicted category is the
     target category and the Grad-CAM for the target category is hidden in the patch location.
     """
-    def __init__(self, model, target_layer_names):
+    def __init__(self, model, target_layer_names, device='cuda'):
         self.model = model
         self.model.eval()
-        self.cuda = torch.cuda.is_available()
+        self.device = device
         self.criterion = torch.nn.CrossEntropyLoss()
-        if self.cuda:
-            self.model = model.cuda()
-            self.criterion = self.criterion.cuda()
+        self.model = model.to(self.device)
+        self.criterion = self.criterion.to(self.device)
         self.extractor = ModelOutputs(self.model, target_layer_names)
         self.relu = torch.nn.ReLU()
 
@@ -112,8 +110,7 @@ class GradCamAttack:
         start_pos = (0, 0)
         patch_size = 64
         mask = torch.zeros_like(image_tensor)
-        if self.cuda:
-            mask = mask.cuda()
+        mask = mask.to(self.device)
         mask.data[0, :, start_pos[1]:start_pos[1] + patch_size, start_pos[0]:start_pos[0] + patch_size] = 1.0
 
         # Means and std_devs used for pre-processing
@@ -134,21 +131,15 @@ class GradCamAttack:
             one_hot[0][target_class_index] = 1
             one_hot = Variable(torch.from_numpy(one_hot), requires_grad=True)
             one_hot_tensor = torch.sum(one_hot * adv_output)
-            if self.cuda:
-                one_hot_tensor = torch.sum(one_hot.cuda() * adv_output)
+            one_hot_tensor = torch.sum(one_hot.to(self.device) * adv_output)
 
             # Clear the gradients before loss computation
             self.model.features.zero_grad()
             self.model.classifier.zero_grad()
 
             # Compute the gradients of the loss with respect to the feature layer for the adversarial image
-            if self.cuda:
-                dy_dz, = torch.autograd.grad(one_hot_tensor, adv_features[0],
-                                             grad_outputs=torch.ones(one_hot_tensor.size()).cuda(),
-                                             retain_graph=True, create_graph=True)
-            else:
-                dy_dz, = torch.autograd.grad(one_hot_tensor, adv_features[0],
-                                             grad_outputs=torch.ones(one_hot_tensor.size()),
+            dy_dz, = torch.autograd.grad(one_hot_tensor, adv_features[0],
+                                        grad_outputs=torch.ones(one_hot_tensor.size()).to(self.device),
                                              retain_graph=True, create_graph=True)
             dy_dz_sum = dy_dz.sum(dim=2).sum(dim=2)
 
@@ -164,8 +155,7 @@ class GradCamAttack:
             # For a 224x224 image, the adversarial patch size is 64x64.
             # Since the gradcam tensor is 14x14 for VGG19 BN network, the corresponding gradcam patch size is 4x4
             gcam_loss = torch.sum(gcam[0:4, 0:4]).abs()
-            if self.cuda:
-                gcam_loss = gcam_loss.cuda()
+            gcam_loss = gcam_loss.to(self.device)
                 
             gcam_loss = gcam_loss / 16.0
 
@@ -173,10 +163,7 @@ class GradCamAttack:
             if np.argmax(adv_output.cpu().data.numpy()) == target_class_index:
                 xe_loss = 0.0
             else:
-                if self.cuda:
-                    xe_loss = self.criterion(adv_output, torch.tensor([target_class_index], dtype=torch.long).cuda())
-                else:
-                    xe_loss = self.criterion(adv_output, torch.tensor([target_class_index], dtype=torch.long))
+                xe_loss = self.criterion(adv_output, torch.tensor([target_class_index], dtype=torch.long).to(self.device))
 
             # We minimize both the gradcam loss and cross entropy loss
             total_loss = gcam_loss + (lambda_val * xe_loss)
@@ -230,14 +217,13 @@ class GradCamRegPatchAttack:
     """
     This class is responsible for creating a regular adversarial patch for a targeted attack.
     """
-    def __init__(self, model, target_layer_names):
+    def __init__(self, model, target_layer_names, device='cuda'):
         self.model = model
         self.model.eval()
         self.criterion = torch.nn.CrossEntropyLoss()
-        self.cuda = torch.cuda.is_available()
-        if self.cuda:
-            self.model = model.cuda()
-            self.criterion = self.criterion.cuda()
+        self.device = device
+        self.model = model.to(self.device)
+        self.criterion = self.criterion.to(self.device)
         self.extractor = ModelOutputs(self.model, target_layer_names)
         self.classes = get_imagenet_classes()
 
@@ -246,10 +232,7 @@ class GradCamRegPatchAttack:
         print('Before attack, Predicted class:{}\tTarget class:{}\n'.format(self.classes[index], self.classes[target_class_index]))
 
         # Clone the original image for computing the perturbed adversarial image
-        if self.cuda:
-            adv_image_tensor = image_tensor.clone() + torch.randn(image_tensor.size()).cuda() / 100
-        else:
-            adv_image_tensor = image_tensor.clone() + torch.randn(image_tensor.size()) / 100
+        adv_image_tensor = image_tensor.clone() + torch.randn(image_tensor.size()).to(self.device) / 100
         
         # Initialize the perturbation tensor
         dl_dx_cumulative = torch.zeros_like(image_tensor)
@@ -267,8 +250,7 @@ class GradCamRegPatchAttack:
         start_pos = (0, 0)
         patch_size = 64
         mask = torch.zeros_like(image_tensor)
-        if self.cuda:
-            mask = mask.cuda()
+        mask = mask.to(self.device)
         mask.data[0, :, start_pos[1]:start_pos[1] + patch_size, start_pos[0]:start_pos[0] + patch_size] = 1.0
 
         loss_zero_counter = 0
@@ -288,12 +270,8 @@ class GradCamRegPatchAttack:
                     target_flip_counter += 1
             else:
                 target_flip_counter = 0
-
-            if self.cuda:
-                xe_loss = self.criterion(adv_output, torch.tensor([target_class_index], dtype=torch.long).cuda())
-            else:
-                xe_loss = self.criterion(adv_output, torch.tensor([target_class_index], dtype=torch.long))
-
+                
+            xe_loss = self.criterion(adv_output, torch.tensor([target_class_index], dtype=torch.long).to(self.device))
             # Stop the attack once the loss is zero for 5 consecutive attack iterations
             if xe_loss == 0.0:
                 if loss_zero_counter > 5:

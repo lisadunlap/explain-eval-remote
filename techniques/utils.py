@@ -11,6 +11,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from data_utils.data_setup import get_model_info
+
 OBJ_NAMES = [
     'backpack', 'bird', 'dog', 'elephant', 'kite', 'pizza', 'stop_sign',
     'toilet', 'truck', 'zebra'
@@ -22,97 +24,16 @@ SCENE_NAMES = [
 
 cifar_classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-def get_model_info(model_name, other_layer = None, device=0):
-    if 'ckpt' in model_name:
-        print('model numbr', model_name)
-        model = models.resnet18()
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, 10)
-        model.load_state_dict(torch.load('/work/lisabdunlap/explain-eval/training/checkpoint/'+model_name+'.pth')['net'])
-        model.eval()
-        return model.cuda(), cifar_classes, 'layer4'
-    if model_name == 'scene' or model_name == 'bam_scene':
-        model = models.resnet50(pretrained=True)
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, 10)
-        model.load_state_dict(torch.load('/work/lisabdunlap/bam/pytorch_models/scenemodel_best.pth.tar')['state_dict'])
-        return model, OBJ_NAMES, 'layer4'
-    if model_name == 'obj' or model_name == 'bam_obj':
-        model = models.resnet50(pretrained=True)
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, 10)
-        model_state = torch.load('/work/lisabdunlap/bam/pytorch_models/obj/objmodel_best.pth.tar', map_location='cuda:0')
-        model.load_state_dict(model_state['state_dict'])
-        return model.cuda(), OBJ_NAMES, 'layer4'
-    if model_name == 'test18':
-        model = models.resnet18()
-        num_ftrs = model.fc.in_features
-        model.fc = nn.Linear(num_ftrs, 10)
-        model.eval()
-        return model, OBJ_NAMES, 'layer4'
-    CONFIG = {
-        'resnet152': {
-            'target_layer': 'layer4',
-            'input_size': 224,
-            'layer_name': '4.2'
-        },
-        'vgg19': {
-            'target_layer': 'features.36',
-            'input_size': 224, 
-            'layer_name': '36'
-        },
-        'vgg19_bn': {
-            'target_layer': 'features.52',
-            'input_size': 224,
-            'layer_name': '52'
-        },
-        'inception_v3': {
-            'target_layer': 'Mixed_7c',
-            'input_size': 299,
-            'layer_name': 'Mixed_7c'
-        },
-        'densenet201': {
-            'target_layer': 'features.denseblock4',
-            'input_size': 224,
-            'layer_name': 'denseblock4'
-        },
-        'resnet18': {
-            'target_layer': 'layer4',
-            'input_size': 224,
-            'layer_name': 4.1
-        },
-        'resnet50': {
-            'target_layer': 'layer4',
-            'input_size': 224,
-            'layer_name': 4.1
-        },
-    }.get(model_name)
-    classes = list()
-    with open('/work/lisabdunlap/explain-eval/data/synset_words.txt') as lines:
-        for line in lines:
-            line = line.strip().split(' ', 1)[1]
-            line = line.split(', ', 1)[0].replace(' ', '_')
-            classes.append(line)
-    model = models.__dict__[model_name](pretrained=True)
-    if torch.cuda.is_available():
-        print('utils dev ', device)
-        dev = cuda + str(device)
-        model = model.to(dev)
-    if other_layer:
-        layer_name = other_layer
-    else:
-        layer_name = CONFIG['layer_name']
-        target_layer = CONFIG['target_layer']
-    return model, classes, target_layer
-
 # for storing results; gets predicted class for given model and img
 def get_top_prediction(model_name, img):
-    model = get_model(model_name)
-    classes = get_imagenet_classes()
+    if isinstance(model_name, str):
+        model, classes, layer = get_model_info(model_name)
+    else:
+        model = model_name
     logits = model(img)
     probs = F.softmax(logits, dim=1)
-    prediction = probs.topk(5)
-    return classes[prediction[1][0].detach().numpy()[0]]
+    prediction = probs.topk(1)
+    return classes[prediction[1][0].detach().cpu().numpy()[0]]
 
 def get_model(model_name):
     return get_model_info(model_name)[0]
@@ -316,12 +237,14 @@ def get_displ_img(img):
     displ_img = displ_img
     return np.uint8(displ_img*255)
 
-def get_displ_img_cifar(img):
-    try:
-        img = img.cpu().numpy().transpose((1, 2, 0))
-    except:
-        img = img.numpy().transpose((1, 2, 0))
-    displ_img = np.clip(img, 0, 1)
-    displ_img /= np.max(displ_img)
-    displ_img = displ_img
-    return displ_img
+'''
+Displayes mask as heatmap on image
+'''
+def get_cam(img, mask):
+    img = get_displ_img(img)
+    heatmap = cv2.cvtColor(cv2.applyColorMap(np.uint8((mask / np.max(mask)) * 255.0), cv2.COLORMAP_JET),
+                               cv2.COLOR_BGR2RGB)
+    alpha = .4
+    cam = heatmap*alpha + np.float32(img)*(1-alpha)
+    cam /= np.max(cam)
+    return cam

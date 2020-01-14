@@ -7,7 +7,7 @@ from torchvision import transforms, datasets, models
 from PIL import Image
 from tqdm import tqdm
 import os
-from RISE.explanations import RISE
+from RISE.explanations import RISE, RISEBatch
 from techniques.utils import read_tensor, get_model
 
 
@@ -93,25 +93,23 @@ def explain_instance(model, explainer, img, top_k=1, show=False, device='cuda'):
             plt.title(get_class_name(c[k]))
             tensor_imshow(img[0])"""
         sal = saliency[c[k]]
-        """if show:
-            plt.imshow(sal, cmap='jet', alpha=0.5)
-            plt.colorbar(fraction=0.046, pad=0.04)
-    
-    if show:
-        plt.show()"""
     return sal
     
-def gen_rise_grounding(img, model, cuda=False, show=True, index=1, device='cuda'):
+def gen_rise_grounding(img, model, device='cuda', show=True, index=1):
     # Load black box model for explanations
     model = nn.Sequential(model, nn.Softmax(dim=1))
+    model=model.to(device)
     model = model.eval()
+    
+    #model = nn.DataParallel(model, device_ids=[4, 5, 6, 7])
 
     for p in model.parameters():
         p.requires_grad = False
+        
+    w, h, _ = img.shape
 
     #create explainer
-    print('mod dev ', device)
-    explainer = RISE(model, (224, 224), 50, device)
+    explainer = RISE(model, (w, h), 50, device)
     
     # Generate masks for RISE or use the saved ones.
     maskspath = 'masks.npy'
@@ -125,26 +123,94 @@ def gen_rise_grounding(img, model, cuda=False, show=True, index=1, device='cuda'
         print('Masks are loaded.')
     
     #explain instance
+    print(index)
     sal = explain_instance(model, explainer, read_tensor(img), index, show=show, device=device)
     print("finished RISE")
     return sal
 
 
-def explain_all_batch(data_loader, explainer):
-    n_batch = len(data_loader)
-    b_size = data_loader.batch_size
-    total = n_batch * b_size
+def explain_all_batch(imgs, model, device='cuda', show=True):
+    model = nn.Sequential(model, nn.Softmax(dim=1))
+    model = model.to(device)
+    model = model.eval()
+    
+    #create explainer
+    explainer = RISE(model, (224, 224), 50, device)
+    
+    # Generate masks for RISE or use the saved ones.
+    maskspath = 'masks.npy'
+    generate_new = True
+
+    if generate_new or not os.path.isfile(maskspath):
+        explainer.generate_masks(N=6000, s=8, p1=0.1, savepath=maskspath)
+        print("Masks are generated.")
+    else:
+        explainer.load_masks(maskspath)
+        print('Masks are loaded.')
+    
+    n_batch = len(imgs)
+    #b_size = data_loader.batch_size
+    total = n_batch
     # Get all predicted labels first
     target = np.empty(total, 'int64')
-    for i, (imgs, _) in enumerate(tqdm(data_loader, total=n_batch, desc='Predicting labels')):
-        p, c = torch.max(nn.Softmax(1)(explainer.model(imgs.cuda())), dim=1)
-        target[i * b_size:(i + 1) * b_size] = c
+    #for i, (imgs, _) in enumerate(tqdm(data_loader, total=n_batch, desc='Predicting labels')):
+    #    p, c = torch.max(nn.Softmax(1)(explainer.model(imgs.cuda())), dim=1)
+    #    target[i * b_size:(i + 1) * b_size] = c
+    p, c = torch.max(nn.Softmax(1)(explainer.model(imgs.to(device))), dim=1)
+    target = c
+    print(target)
     image_size = imgs.shape[-2:]
+    print(image_size)
 
     # Get saliency maps for all images in val loader
     explanations = np.empty((total, *image_size))
+    #for i, (imgs, _) in enumerate(tqdm(data_loader, total=n_batch, desc='Explaining images')):
+    #    saliency_maps = explainer(imgs.cuda())
+    #    explanations[i * b_size:(i + 1) * b_size] = saliency_maps[
+    #        range(b_size), target[i * b_size:(i + 1) * b_size]].data.cpu().numpy()
+    saliency_maps = explainer(imgs.cuda())
+    try:
+        explanations[0] = saliency_maps[
+            range(n_batch), target].data.cpu().numpy()
+    except:
+        explanations = 'whoops'
+    return explanations, saliency_maps
+
+def explain_all_batch2(data_loader, model, device='cuda'):
+    model = nn.Sequential(model, nn.Softmax(dim=1))
+    model = model.to(device)
+    model = model.eval()
+    
+    #create explainer
+    explainer = RISE(model, (224, 224), 50, device)
+    
+    # Generate masks for RISE or use the saved ones.
+    maskspath = 'masks.npy'
+    generate_new = False
+
+    if generate_new or not os.path.isfile(maskspath):
+        explainer.generate_masks(N=6000, s=8, p1=0.1, savepath=maskspath)
+        print("Masks are generated.")
+    else:
+        explainer.load_masks(maskspath)
+        print('Masks are loaded.')
+        
+    n_batch = len(data_loader)
+    b_size = data_loader.batch_size
+    total = n_batch * b_size
+    print(n_batch)
+    print(b_size)
+    print(total)
+    # Get all predicted labels first
+    target = np.empty(total, 'int64')
+    for i, (imgs, _) in enumerate(tqdm(data_loader, total=n_batch, desc='Predicting labels')):
+        p, c = torch.max(nn.Softmax(1)(explainer.model(imgs.to(device))), dim=1)
+        target[i * b_size:(i + 1) * b_size] = c.cpu()
+        image_size = imgs.shape[-2:]
+    # Get saliency maps for all images in val loader
+    explanations = np.empty((total, *image_size))
     for i, (imgs, _) in enumerate(tqdm(data_loader, total=n_batch, desc='Explaining images')):
-        saliency_maps = explainer(imgs.cuda())
+        saliency_maps = explainer(imgs.to(device))
         explanations[i * b_size:(i + 1) * b_size] = saliency_maps[
             range(b_size), target[i * b_size:(i + 1) * b_size]].data.cpu().numpy()
     return explanations

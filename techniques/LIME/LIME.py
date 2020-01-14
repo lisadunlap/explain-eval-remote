@@ -13,9 +13,10 @@ from sklearn import metrics
 
 from lime import lime_image
 from skimage.segmentation import mark_boundaries
-from techniques.utils import get_model, get_imagenet_classes, read_tensor
+from techniques.utils import get_model, get_imagenet_classes, read_tensor, get_displ_img
 
 #model = models.resnet18(pretrained=True)
+device = 'cuda'
 
 # resize and take the center part of image to what our model expects
 def get_input_transform():
@@ -69,7 +70,7 @@ def batch_predict(images):
     #batch = torch.stack(tuple(preprocess_transform(i) for i in images), dim=0)
     batch = torch.stack(tuple(preprocess_transform(i/np.max(i)).float() for i in images), dim=0)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     batch = batch.to(device)
     
@@ -77,39 +78,31 @@ def batch_predict(images):
     probs = F.softmax(logits, dim=1)
     return probs.detach().cpu().numpy()
 
-def generate_lime_explanation(img, model_t, pred_rank=1, positive_only=True, show=True):
+def batch_predict_tensor(images):
+    print('get here')
+    model.eval()
+    #batch = torch.stack(tuple(preprocess_transform(i) for i in images), dim=0)
+    batch = torch.stack(images, dim=0)
+
+    #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    batch = batch.to(device)
+    
+    logits = model(batch)
+    probs = F.softmax(logits, dim=1)
+    return probs.detach().cpu().numpy()
+
+def generate_lime_explanation(img, model_t, pred_rank=1, target_index=None, positive_only=True, show=True, device='cuda'):
     #img = get_image(path)
     #image for display purposes
     global model
-    model = model_t.cuda()
-    displ_img = img
-    # image for generating mask
-    #img = Image.fromarray(img.astype('uint8'), 'RGB')
-    
-    idx2label, cls2label, cls2idx = [], {}, {}
-    try:
-        with open(os.path.abspath('../data/imagenet_class_index.json'), 'r') as read_file:
-            class_idx = json.load(read_file)
-            idx2label = [class_idx[str(k)][1] for k in range(len(class_idx))]
-            cls2label = {class_idx[str(k)][0]: class_idx[str(k)][1] for k in range(len(class_idx))}
-            cls2idx = {class_idx[str(k)][0]: k for k in range(len(class_idx))}
-    except:
-        with open(os.path.abspath('./data/imagenet_class_index.json'), 'r') as read_file:
-            class_idx = json.load(read_file)
-            idx2label = [class_idx[str(k)][1] for k in range(len(class_idx))]
-            cls2label = {class_idx[str(k)][0]: class_idx[str(k)][1] for k in range(len(class_idx))}
-            cls2idx = {class_idx[str(k)][0]: k for k in range(len(class_idx))}
+    #global device
+    device=device
+    model = model_t.to(device)
+    displ_img = np.uint8((img/np.max(img))*255)
 
     model.eval()
-    img_t = read_tensor(img)
-   # if torch.cuda.is_available():
-   #     img_t = img_t.cuda()
-   # logits = model(img_t)
-   # probs = F.softmax(logits, dim=1)
-   # probs5 = probs.topk(5)
-   # tuple((p,c, idx2label[c]) for p, c in zip(probs5[0][0].detach().cpu().numpy(), probs5[1][0].detach().cpu().numpy()))
-   # classes = get_imagenet_classes()
-   # print("original lime classification: {0}".format(classes[probs5[1][0].detach().cpu().numpy()[0]]))
+    img_t = read_tensor(displ_img)
 
     explainer = lime_image.LimeImageExplainer()
     explanation = explainer.explain_instance((displ_img/np.max(displ_img).astype(float)),
@@ -117,17 +110,47 @@ def generate_lime_explanation(img, model_t, pred_rank=1, positive_only=True, sho
                                              top_labels=pred_rank, 
                                              hide_color=0, 
                                              num_samples=1000)
-    temp, mask = explanation.get_image_and_mask(explanation.top_labels[pred_rank-1], positive_only, num_features=5, hide_rest=False)
+    if target_index == None:
+        temp, mask = explanation.get_image_and_mask(explanation.top_labels[pred_rank-1], positive_only, num_features=5, hide_rest=False)
+    else:
+        temp, mask = explanation.get_image_and_mask(target_index, positive_only, num_features=5, hide_rest=False)
     print('lime classsification: {0}'.format(explanation.top_labels[pred_rank-1]))
     # img_boundry1 = mark_boundaries(temp/255.0, mask)
     img_boundry1 = mark_boundaries(temp/255.0, mask)
-    cv2.imwrite('/work/lisabdunlap/explain-eval/results/different_architectures/cat_dog/lime_resnet18.png', img_boundry1)
-    """if show:
-        heatmap = cv2.cvtColor(cv2.applyColorMap(np.uint8((mask/np.max(mask)) * 255.0), cv2.COLORMAP_JET), cv2.COLOR_BGR2RGB)
-        cam = heatmap + np.float32(displ_img)
-        cam /= np.max(cam)
-        plt.imshow(cam)"""
     print('finished lime explanation')
     #return img_boundry1, np.array(mask, dtype=float)
     del img_t
     return np.array(mask, dtype=float)
+
+def generate_lime_explanation_batch(imgs, model_t, pred_rank=1, positive_only=True, show=True, device='cuda'):
+    #img = get_image(path)
+    #image for display purposes
+    global model
+    model = model_t.to(device)
+    device=device
+    # image for generating mask
+    #img = Image.fromarray(img.astype('uint8'), 'RGB')
+    model.eval()
+    
+    masks = []
+    displ_imgs = []
+    for im in imgs:
+        displ_imgs += [get_displ_img(im)]
+        
+    explainer = lime_image.LimeImageExplainer()
+    '''explanations = explainer.explain_instance(np.array(displ_imgs),
+                                            batch_predict_tensor, # classification function
+                                            top_labels=pred_rank, 
+                                            hide_color=0, 
+                                            num_samples=1000)'''
+    for displ_img in displ_imgs:
+        explanation = explainer.explain_instance((displ_img/np.max(displ_img).astype(float)),
+                                             batch_predict, # classification function
+                                             top_labels=pred_rank, 
+                                             hide_color=0, 
+                                             num_samples=1000)
+        print('explained')
+        temp, mask = explanation.get_image_and_mask(explanation.top_labels[pred_rank-1], positive_only, num_features=5, hide_rest=False)
+        masks += [mask]
+    print('finished lime explanation')
+    return np.array(masks, dtype=float)

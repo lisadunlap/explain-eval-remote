@@ -11,7 +11,7 @@ class RISE(nn.Module):
         self.model = model
         self.input_size = input_size
         self.gpu_batch = gpu_batch
-        self.device = 'cuda:7'
+        self.device = device
 
     def generate_masks(self, N, s, p1, savepath='masks.npy'):
         cell_size = np.ceil(np.array(self.input_size) / s)

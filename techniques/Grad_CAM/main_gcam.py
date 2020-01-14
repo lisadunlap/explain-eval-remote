@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torchvision import models, transforms
 
-from Grad_CAM.gcam3 import (
+from Grad_CAM.gcam import (
     BackPropagation,
     Deconvnet,
     GradCAM,
@@ -59,11 +59,12 @@ def preprocess(raw_image):
     return image, raw_image
 
 
-def save_gradient(filename, gradient):
+def save_gradient(gradient):
     gradient = gradient.cpu().numpy().transpose(1, 2, 0)
     gradient -= gradient.min()
     gradient /= gradient.max()
     gradient *= 255.0
+    return gradient
     #cv2.imwrite(filename, np.uint8(gradient))
 
 
@@ -105,8 +106,8 @@ def gen_gcam(imgs, model, target_layer='layer4', target_index=1, classes=get_cla
         images.append(image)
         raw_images.append(raw_image)
     images = torch.stack(images).to(device)
-    bp = BackPropagation(model=model)
-    probs, ids = bp.forward(images)
+    #bp = BackPropagation(model=model)
+    #probs, ids = bp.forward(images)
 
     gcam = GradCAM(model=model)
     probs, ids = gcam.forward(images)
@@ -129,6 +130,7 @@ def gen_gcam(imgs, model, target_layer='layer4', target_index=1, classes=get_cla
             masks += [mask]
     if single:
         return masks[0]
+    gcam.remove_hook()
     return masks
 
 def gen_gcam_target(imgs, model, target_layer='layer4', target_index=None, classes=get_classtable(), cuda=True, device='cuda', single=True, prep=True):
@@ -168,6 +170,189 @@ def gen_gcam_target(imgs, model, target_layer='layer4', target_index=None, class
         )
         masks += [mask]
 
+    if single:
+        return masks[0]
+    return masks
+
+
+def gen_bp(imgs, model, target_layer='layer4', target_index=1, classes=get_classtable(), cuda=True, device='cuda', single=True, prep=True, show_labels=False):
+    """
+    Visualize model responses given multiple images
+    """
+
+    #device = get_device(cuda, device)
+
+    # Model from torchvision
+    model.to(device)
+    model.eval()
+
+    # Images
+    images = []
+    raw_images = []
+    for i, im in enumerate(imgs):
+        if prep:
+            image, raw_image = preprocess(im)
+        else:
+            image = im
+            raw_image = im.cpu().numpy().transpose((1,2,0))
+        images.append(image)
+        raw_images.append(raw_image)
+    images = torch.stack(images).to(device)
+    #bp = BackPropagation(model=model)
+    #probs, ids = bp.forward(images)
+
+    bp = BackPropagation(model=model)
+    probs, ids = bp.forward(images)
+
+    for i in range(target_index):
+        bp.backward(ids=ids[:, [i]])
+        gradients = bp.generate()
+        masks = []
+        for j in range(len(images)):
+            if show_labels:
+                print("\t#{}: {} ({:.5f})".format(j, classes[ids[j, i]], probs[j, i]))
+
+            mask = save_gradient(
+                gradient=gradients[j],
+            )
+            print(mask.shape)
+            mask[mask < np.percentile(mask, 90)] = 0
+            mask /= np.max(mask)
+            masks += [mask[:,:,1]]
+    if single:
+        return masks[0]
+    gcam.remove_hook()
+    return masks
+
+def gen_bp_target(imgs, model, target_layer='layer4', target_index=None, classes=get_classtable(), cuda=True, device='cuda', single=True, prep=True):
+    """
+    Visualize model responses given multiple images
+    """
+
+    #device = get_device(cuda, device)
+
+    # Model from torchvision
+    model.to(device)
+    model.eval()
+
+    # Images
+    images = []
+    raw_images = []
+    for i, im in enumerate(imgs):
+        if prep:
+            image, raw_image = preprocess(im)
+        else:
+            image = im
+            raw_image = im.cpu().numpy().transpose((1,2,0))
+        images.append(image)
+        raw_images.append(raw_image)
+    images = torch.stack(images).to(device)
+
+    bp = BackPropagation(model=model)
+    probs, ids = bp.forward(images)
+    ids_ = torch.LongTensor([[x] for x in target_index]).to(device)
+    bp.backward(ids=ids_)
+    gradients = bp.generate()
+    masks = []
+    for j in range(len(images)):
+        mask = save_gradient(
+                gradient=gradients[j],
+            )
+        print(mask.shape)
+        mask[mask < np.percentile(mask, 90)] = 0
+        mask /= np.max(mask)
+        masks += [mask[:,:,1]]
+    if single:
+        return masks[0]
+    return masks
+
+def gen_gbp(imgs, model, target_layer='layer4', target_index=1, classes=get_classtable(), cuda=True, device='cuda', single=True, prep=True, show_labels=False):
+    """
+    Visualize model responses given multiple images
+    """
+
+    #device = get_device(cuda, device)
+
+    # Model from torchvision
+    model.to(device)
+    model.eval()
+
+    # Images
+    images = []
+    raw_images = []
+    for i, im in enumerate(imgs):
+        if prep:
+            image, raw_image = preprocess(im)
+        else:
+            image = im
+            raw_image = im.cpu().numpy().transpose((1,2,0))
+        images.append(image)
+        raw_images.append(raw_image)
+    images = torch.stack(images).to(device)
+    #bp = BackPropagation(model=model)
+    #probs, ids = bp.forward(images)
+
+    gbp = GuidedBackPropagation(model=model)
+    probs, ids = gbp.forward(images)
+
+    for i in range(target_index):
+        gbp.backward(ids=ids[:, [i]])
+        gradients = gbp.generate()
+        masks = []
+        for j in range(len(images)):
+            if show_labels:
+                print("\t#{}: {} ({:.5f})".format(j, classes[ids[j, i]], probs[j, i]))
+
+            mask = save_gradient(
+                gradient=gradients[j],
+            )
+            print(mask.shape)
+            mask[mask < np.percentile(mask, 90)] = 0
+            mask /= np.max(mask)
+            masks += [mask[:,:,1]]
+    if single:
+        return masks[0]
+    gcam.remove_hook()
+    return masks
+
+def gen_gbp_target(imgs, model, target_layer='layer4', target_index=None, classes=get_classtable(), cuda=True, device='cuda', single=True, prep=True):
+    """
+    Visualize model responses given multiple images
+    """
+
+    #device = get_device(cuda, device)
+
+    # Model from torchvision
+    model.to(device)
+    model.eval()
+
+    # Images
+    images = []
+    raw_images = []
+    for i, im in enumerate(imgs):
+        if prep:
+            image, raw_image = preprocess(im)
+        else:
+            image = im
+            raw_image = im.cpu().numpy().transpose((1,2,0))
+        images.append(image)
+        raw_images.append(raw_image)
+    images = torch.stack(images).to(device)
+
+    gbp = GuidedBackPropagation(model=model)
+    probs, ids = gbp.forward(images)
+    ids_ = torch.LongTensor([[x] for x in target_index]).to(device)
+    gbp.backward(ids=ids_)
+    gradients = gbp.generate()
+    masks = []
+    for j in range(len(images)):
+        mask = save_gradient(
+                gradient=gradients[j],
+            )
+        print(mask.shape)
+        mask[mask < np.percentile(mask, 90)] = 0
+        mask /= np.max(mask)
+        masks += [mask[:,:,1]]
     if single:
         return masks[0]
     return masks

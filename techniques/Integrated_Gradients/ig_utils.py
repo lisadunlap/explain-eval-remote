@@ -2,15 +2,41 @@ import torch
 import torch.nn.functional as F
 import cv2
 import numpy as np
-from torch.autograd import Variable
-from utils import read_tensor
 
-def calculate_outputs_and_gradients(inputs, model, target_label_idx, cuda='cuda'):
+def calculate_outputs_and_gradients(inputs, model, target_label_idx, cuda=False):
+    # do the pre-processing
+    predict_idx = None
+    gradients = []
+    i=0
+    for input in inputs:
+        input = pre_processing(input, cuda)
+        output = model(input)
+        output = F.softmax(output, dim=1)
+        if target_label_idx is None:
+            target_label_idx = torch.argmax(output, 1).item()
+        if isinstance(target_label_idx, list):
+            index = np.ones((output.size()[0], 1)) * target_label_idx[i]
+        else:
+            index = np.ones((output.size()[0], 1)) * target_label_idx
+        index = torch.tensor(index, dtype=torch.int64)
+        if cuda:
+            index = index.cuda()
+        output = output.gather(1, index)
+        # clear grad
+        model.zero_grad()
+        output.backward()
+        gradient = input.grad.detach().cpu().numpy()[0]
+        gradients.append(gradient)
+        i+= 1
+    gradients = np.array(gradients)
+    return gradients, target_label_idx
+
+def calculate_outputs_and_gradients_tensor(inputs, model, target_label_idx, cuda=False):
     # do the pre-processing
     predict_idx = None
     gradients = []
     for input in inputs:
-        input = pre_processing(input, cuda)
+        #input = pre_processing(input, cuda)
         output = model(input)
         output = F.softmax(output, dim=1)
         if target_label_idx is None:
@@ -18,7 +44,7 @@ def calculate_outputs_and_gradients(inputs, model, target_label_idx, cuda='cuda'
         index = np.ones((output.size()[0], 1)) * target_label_idx
         index = torch.tensor(index, dtype=torch.int64)
         if cuda:
-            index = index.to(cuda)
+            index = index.cuda()
         output = output.gather(1, index)
         # clear grad
         model.zero_grad()
@@ -36,15 +62,12 @@ def pre_processing(obs, cuda):
     obs = np.transpose(obs, (2, 0, 1))
     obs = np.expand_dims(obs, 0)
     obs = np.array(obs)
-    # torch_device = torch.device('cpu')
-    normalized_tensor = torch.tensor(obs, dtype=torch.float32, requires_grad=True)
-    """if cuda:
+    if cuda:
         torch_device = torch.device('cuda:0')
     else:
         torch_device = torch.device('cpu')
-    normalized_tensor = Variable(read_tensor(obs), device=torch_device, requires_grad=True)"""
-
-    return normalized_tensor.to(cuda)
+    obs_tensor = torch.tensor(obs, dtype=torch.float32, device=torch_device, requires_grad=True)
+    return obs_tensor
 
 # generate the entire images
 def generate_entrie_images(img_origin, img_grad, img_grad_overlay, img_integrad, img_integrad_overlay):
